@@ -1,6 +1,6 @@
 /*
-Usage: 
-  Adding this script to your doc: 
+Usage:
+  Adding this script to your doc:
     - Tools > Script Manager > New
     - Select "Blank Project", then paste this code in and save.
   Running the script:
@@ -9,6 +9,9 @@ Usage:
     - Click Run button.
     - Converted doc will be mailed to you. Subject will be "[MARKDOWN_MAKER]...".
 */
+
+var folderName = 'Markdown';
+var SAVE_TO = "drive";
 
 function ConvertToMarkdown() {
   var numChildren = DocumentApp.getActiveDocument().getActiveSection().getNumChildren();
@@ -19,9 +22,9 @@ function ConvertToMarkdown() {
   var globalListCounters = {};
   // edbacher: added a variable for indent in src <pre> block. Let style sheet do margin.
   var srcIndent = "";
-  
+
   var attachments = [];
-  
+
   // Walk through all the child elements of the doc.
   for (var i = 0; i < numChildren; i++) {
     var child = DocumentApp.getActiveDocument().getActiveSection().getChild(i);
@@ -53,28 +56,35 @@ function ConvertToMarkdown() {
       } else if (result.text && result.text.length>0) {
         text+=result.text+"\n\n";
       }
-      
+
       if (result.images && result.images.length>0) {
         for (var j=0; j<result.images.length; j++) {
           attachments.push( {
             "fileName": result.images[j].name,
-            "mimeType": result.images[j].type,
             "content": result.images[j].bytes } );
         }
       }
     } else if (inSrc) { // support empty lines inside source code
       text+='\n';
     }
-      
+
   }
-  
-  attachments.push({"fileName":DocumentApp.getActiveDocument().getName()+".md", "mimeType": "text/plain", "content": text});
-  
-  MailApp.sendEmail(Session.getActiveUser().getEmail(), 
-                    "[MARKDOWN_MAKER] "+DocumentApp.getActiveDocument().getName(), 
-                    "Your converted markdown document is attached (converted from "+DocumentApp.getActiveDocument().getUrl()+")"+
-                    "\n\nDon't know how to use the format options? See http://github.com/mangini/gdocs2md\n",
-                    { "attachments": attachments });
+
+  var docName = DocumentApp.getActiveDocument().getName();
+  attachments.push({"fileName": docName +".md", "content": text});
+
+  if (SAVE_TO === "drive") {
+    SaveToDrive(attachments);
+  }
+
+  else {
+    MailApp.sendEmail(Session.getActiveUser().getEmail(),
+                      "[MARKDOWN_MAKER] "+ docName,
+                      "Your converted markdown document is attached (converted from "+DocumentApp.getActiveDocument().getUrl()+")"+
+                      "\n\nDon't know how to use the format options? See http://github.com/mangini/gdocs2md\n",
+                      { "attachments": attachments });
+  }
+
 }
 
 function escapeHTML(text) {
@@ -86,39 +96,55 @@ function processParagraph(index, element, inSrc, imageCounter, listCounters) {
   // First, check for things that require no processing.
   if (element.getNumChildren()==0) {
     return null;
-  }  
+  }
   // Punt on TOC.
   if (element.getType() === DocumentApp.ElementType.TABLE_OF_CONTENTS) {
     return {"text": "[[TOC]]"};
   }
-  
+
   // Set up for real results.
   var result = {};
   var pOut = "";
   var textElements = [];
   var imagePrefix = "image_";
-  
-  // Handle Table elements. Pretty simple-minded now, but works for simple tables.
-  // Note that Markdown does not process within block-level HTML, so it probably 
-  // doesn't make sense to add markup within tables.
+
+  // Handle Table elements.
   if (element.getType() === DocumentApp.ElementType.TABLE) {
-    textElements.push("<table>\n");
+  //  textElements.push("<table>\n");
     var nCols = element.getChild(0).getNumCells();
+
+    //process each row
     for (var i = 0; i < element.getNumChildren(); i++) {
-      textElements.push("  <tr>\n");
       // process this row
       for (var j = 0; j < nCols; j++) {
-        textElements.push("    <td>" + element.getChild(i).getChild(j).getText() + "</td>\n");
+
+        var selectedElement = element.getChild(i).getChild(j);
+        textElements.push(selectedElement);
+
+        // last item in row has no pipe at end
+        if (j === (nCols -1)) {
+          textElements.push(" \n");
+        }
+        else {
+          textElements.push(" | ");
+        }
+
       }
-      textElements.push("  </tr>\n");
+
+      // process header row
+      if (i == 0) {
+        for (var j = 0; j < nCols - 1; j++) {
+          textElements.push("--- |");
+        }
+        textElements.push("--- \n");
+      }
     }
-    textElements.push("</table>\n");
   }
-  
+
   // Process various types (ElementType).
   for (var i = 0; i < element.getNumChildren(); i++) {
     var t=element.getChild(i).getType();
-    
+
     if (t === DocumentApp.ElementType.TABLE_ROW) {
       // do nothing: already handled TABLE_ROW
     } else if (t === DocumentApp.ElementType.TEXT) {
@@ -142,8 +168,8 @@ function processParagraph(index, element, inSrc, imageCounter, listCounters) {
       imageCounter++;
       textElements.push('![image alt text]('+name+')');
       result.images.push( {
-        "bytes": element.getChild(i).getBlob().getBytes(), 
-        "type": contentType, 
+        "bytes": element.getChild(i).getBlob().getBytes(),
+        "type": contentType,
         "name": name});
     } else if (t === DocumentApp.ElementType.PAGE_BREAK) {
       // ignore
@@ -161,7 +187,7 @@ function processParagraph(index, element, inSrc, imageCounter, listCounters) {
     // Isn't result empty now?
     return result;
   }
-  
+
   // evb: Add source pretty too. (And abbreviations: src and srcp.)
   // process source code block:
   if (/^\s*---\s+srcp\s*$/.test(pOut) || /^\s*---\s+source pretty\s*$/.test(pOut)) {
@@ -181,8 +207,8 @@ function processParagraph(index, element, inSrc, imageCounter, listCounters) {
                   '"></iframe>';
   } else {
 
-    prefix = findPrefix(inSrc, element, listCounters);
-  
+    var prefix = findPrefix(inSrc, element, listCounters);
+
     var pOut = "";
     for (var i=0; i<textElements.length; i++) {
       pOut += processTextElement(inSrc, textElements[i]);
@@ -190,10 +216,10 @@ function processParagraph(index, element, inSrc, imageCounter, listCounters) {
 
     // replace Unicode quotation marks
     pOut = pOut.replace('\u201d', '"').replace('\u201c', '"');
- 
+
     result.text = prefix+pOut;
   }
-  
+
   return result;
 }
 
@@ -239,51 +265,96 @@ function findPrefix(inSrc, element, listCounters) {
 }
 
 function processTextElement(inSrc, txt) {
+
   if (typeof(txt) === 'string') {
     return txt;
   }
-  
-  var pOut = txt.getText();
-  if (! txt.getTextAttributeIndices) {
-    return pOut;
+
+  var oInput = txt;
+  if (oInput.editAsText) {
+    oInput = oInput.editAsText();
   }
-  
-  var attrs=txt.getTextAttributeIndices();
-  var lastOff=pOut.length;
+  var sOutput = txt.getText();
+
+
+  if (! oInput.getTextAttributeIndices) {
+    return sOutput;
+  }
+
+  var attrs=oInput.getTextAttributeIndices();
+  var lastOff=sOutput.length;
 
   for (var i=attrs.length-1; i>=0; i--) {
     var off=attrs[i];
-    var url=txt.getLinkUrl(off);
-    var font=txt.getFontFamily(off);
+    var url=oInput.getLinkUrl(off);
+    var font=oInput.getFontFamily(off);
     if (url) {  // start of link
-      if (i>=1 && attrs[i-1]==off-1 && txt.getLinkUrl(attrs[i-1])===url) {
+      if (i>=1 && attrs[i-1]==off-1 && oInput.getLinkUrl(attrs[i-1])===url) {
         // detect links that are in multiple pieces because of errors on formatting:
         i-=1;
         off=attrs[i];
         url=txt.getLinkUrl(off);
       }
-      pOut=pOut.substring(0, off)+'['+pOut.substring(off, lastOff)+']('+url+')'+pOut.substring(lastOff);
+      sOutput=sOutput.substring(0, off)+'['+sOutput.substring(off, lastOff)+']('+url+')'+sOutput.substring(lastOff);
     } else if (font) {
       if (!inSrc && font===font.COURIER_NEW) {
-        while (i>=1 && txt.getFontFamily(attrs[i-1]) && txt.getFontFamily(attrs[i-1])===font.COURIER_NEW) {
+        while (i>=1 && oInput.getFontFamily(attrs[i-1]) && oInput.getFontFamily(attrs[i-1])===font.COURIER_NEW) {
           // detect fonts that are in multiple pieces because of errors on formatting:
           i-=1;
           off=attrs[i];
         }
-        pOut=pOut.substring(0, off)+'`'+pOut.substring(off, lastOff)+'`'+pOut.substring(lastOff);
+        sOutput=sOutput.substring(0, off)+'`'+sOutput.substring(off, lastOff)+'`'+sOutput.substring(lastOff);
       }
     }
-    if (txt.isBold(off)) {
+    if (oInput.isBold(off)) {
       var d1 = d2 = "**";
-      if (txt.isItalic(off)) {
-        // edbacher: changed this to handle bold italic properly.
-        d1 = "**_"; d2 = "_**";
+      if (oInput.isItalic(off)) {
+        if (oInput.isStrikethrough(off)) {
+          d1 = "~~**_"; d2 = "_**~~";
+        }
+        else {
+          d1 = "**_"; d2 = "_**";
+        }
+
       }
-      pOut=pOut.substring(0, off)+d1+pOut.substring(off, lastOff)+d2+pOut.substring(lastOff);
-    } else if (txt.isItalic(off)) {
-      pOut=pOut.substring(0, off)+'*'+pOut.substring(off, lastOff)+'*'+pOut.substring(lastOff);
+      else if (oInput.isStrikethrough(off)) {
+        d1 = "~~**"; d2 = "**~~";
+      }
+      sOutput=sOutput.substring(0, off)+d1+sOutput.substring(off, lastOff)+d2+sOutput.substring(lastOff);
+    }
+    else if (oInput.isItalic(off)) {
+      var d1 = d2 = "_";
+      if (oInput.isStrikethrough(off)) {
+        d1 = "~~_"; d2 = "_~~";
+      }
+      sOutput=sOutput.substring(0, off)+d1+sOutput.substring(off, lastOff)+d2+sOutput.substring(lastOff);
     }
     lastOff=off;
+
   }
-  return pOut;
+  return sOutput;
+}
+
+function SaveToDrive(inputs){
+  var parentFolder = getFolder_(folderName);
+  var root = DriveApp.getRootFolder();
+  for(var k in inputs){
+    var attachment = inputs[k];
+    var file = DriveApp.createFile(attachment.fileName, attachment.content);
+    parentFolder.addFile(file);
+    root.removeFile(file);
+    }
+}
+
+//This function will get the parent folder in Google drive
+function getFolder_(folderName){
+  var folder;
+  var fi = DriveApp.getFoldersByName(folderName);
+  if(fi.hasNext()){
+    folder = fi.next();
+  }
+  else{
+    folder = DriveApp.createFolder(folderName);
+  }
+  return folder;
 }
